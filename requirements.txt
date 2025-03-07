@@ -1,0 +1,12 @@
+streamlit>=1.22.0
+requests>=2.28.2
+beautifulsoup4>=4.11.2
+pandas>=1.5.3
+networkx>=3.0
+matplotlib>=3.7.1
+sqlalchemy>=2.0.0
+passlib>=1.7.4
+python-Levenshtein>=0.20.9
+streamlit-agraph>=0.0.42
+streamlit-authenticator>=0.1.5
+pyvis>=0.3.2

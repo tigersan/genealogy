@@ -25,7 +25,7 @@ Update to the tree_builder.py file to fix the initialization issue
 
 # At the top of tree_builder.py, update the __init__ method:
 
-    def __init__(self, db, scraper=None):
+def __init__(self, db, scraper=None):
     """
     Initialize the tree builder.
     

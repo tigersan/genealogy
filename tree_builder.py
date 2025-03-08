@@ -33,21 +33,21 @@ def __init__(self, db, scraper=None):
         db: Database instance for storing and retrieving data
         scraper: Optional scraper for searching additional records
     """
-        self.db = db
-        self.scraper = scraper
+    self.db = db
+    self.scraper = scraper
     # Gender constants
-        self.MALE = 'M'
-        self.FEMALE = 'F'
-        self.UNKNOWN = 'U'
+    self.MALE = 'M'
+    self.FEMALE = 'F'
+    self.UNKNOWN = 'U'
     # Tracking for recursive searches
-        self.search_queue = []
-        self.searched_persons = set()
-        self.stats = {
-            "persons_found": 0,
-            "generations_searched": 0,
-            "searches_performed": 0,
-            "extended_family_members": 0
-        }
+    self.search_queue = []
+    self.searched_persons = set()
+    self.stats = {
+        "persons_found": 0,
+        "generations_searched": 0,
+        "searches_performed": 0,
+        "extended_family_members": 0
+    }
     
     def import_scraped_data(self, data):
         """

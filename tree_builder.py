@@ -19,18 +19,35 @@ class TreeBuilder:
     """
     Build family trees by analyzing genealogical events
     """
-    def __init__(self, db):
-        """
-        Initialize the tree builder.
-        
+"""
+Update to the tree_builder.py file to fix the initialization issue
+"""
+
+# At the top of tree_builder.py, update the __init__ method:
+
+    def __init__(self, db, scraper=None):
+    """
+    Initialize the tree builder.
+    
         Args:
-            db: Database instance for storing and retrieving data
-        """
+        db: Database instance for storing and retrieving data
+        scraper: Optional scraper for searching additional records
+    """
         self.db = db
-        # Gender constants
+        self.scraper = scraper
+    # Gender constants
         self.MALE = 'M'
         self.FEMALE = 'F'
         self.UNKNOWN = 'U'
+    # Tracking for recursive searches
+        self.search_queue = []
+        self.searched_persons = set()
+        self.stats = {
+            "persons_found": 0,
+            "generations_searched": 0,
+            "searches_performed": 0,
+            "extended_family_members": 0
+        }
     
     def import_scraped_data(self, data):
         """

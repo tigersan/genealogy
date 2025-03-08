@@ -38,32 +38,6 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Initialize app state
-def init_app():
-    """Initialize the app state."""
-    init_auth()
-    
-    if 'tree_builder' not in st.session_state:
-        st.session_state.tree_builder = TreeBuilder(db)
-    
-    if 'scraper' not in st.session_state:
-        st.session_state.scraper = WolynScraper()
-    
-    if 'current_view' not in st.session_state:
-        st.session_state.current_view = 'search'
-    
-    if 'search_results' not in st.session_state:
-        st.session_state.search_results = None
-    
-    if 'selected_person' not in st.session_state:
-        st.session_state.selected_person = None
-    
-    if 'family_trees' not in st.session_state:
-        st.session_state.family_trees = None
-
-def set_view(view):
-    """Set the current view."""
-    st.session_state.current_view = view
 
 # App header and navigation
 def show_header():
@@ -83,6 +57,49 @@ def show_header():
             if st.button("Logout"):
                 logout()
                 st.experimental_rerun()
+
+
+# Initialize app state
+def init_app():
+    """Initialize the app state."""
+    # Initialize the database connection
+    from database import init_database, db as db_instance
+    global db
+    
+    if 'db' not in st.session_state:
+        db = init_database()
+        st.session_state.db = db
+    else:
+        db = st.session_state.db
+    
+    # Check if database was initialized successfully
+    if not db:
+        st.error("Failed to connect to Supabase database. Please check your credentials.")
+        st.stop()
+    
+    # Initialize other components
+    init_auth()
+    
+    if 'scraper' not in st.session_state:
+        st.session_state.scraper = WolynScraper()
+    
+    if 'tree_builder' not in st.session_state:
+        st.session_state.tree_builder = TreeBuilder(db, st.session_state.scraper)
+    
+    if 'current_view' not in st.session_state:
+        st.session_state.current_view = 'search'
+    
+    if 'search_results' not in st.session_state:
+        st.session_state.search_results = None
+    
+    if 'selected_person' not in st.session_state:
+        st.session_state.selected_person = None
+    
+    if 'family_trees' not in st.session_state:
+        st.session_state.family_trees = None
+    
+    if 'discovery_status' not in st.session_state:
+        st.session_state.discovery_status = None
 
 # Sidebar navigation
 def show_sidebar():

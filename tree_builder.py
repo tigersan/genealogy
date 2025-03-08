@@ -1,6 +1,3 @@
-"""
-Family tree builder for Wolyn Genealogy Explorer
-"""
 import re
 import datetime
 import pandas as pd
@@ -9,6 +6,7 @@ import logging
 from Levenshtein import distance
 import matplotlib.pyplot as plt
 from database import Person, Relationship, Marriage, BirthEvent, DeathEvent, MarriageEvent
+import numpy as np
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, 
@@ -19,12 +17,7 @@ class TreeBuilder:
     """
     Build family trees by analyzing genealogical events
     """
-"""
-Update to the tree_builder.py file to fix the initialization issue
-"""
-
-# At the top of tree_builder.py, update the __init__ method:
-
+    
     def __init__(self, db, scraper=None):
         """
         Initialize the tree builder.
@@ -636,253 +629,6 @@ Update to the tree_builder.py file to fix the initialization issue
         
         # Look for potential matches
         similar_persons = self.find_matches_by_name(
-            first_name=birth_event.first_name,
-            last_name=birth_event.last_name,
-            threshold=0.8
-        )
-        
-        # Check if any of the matches have a compatible birth date
-        for match in similar_persons:
-            person = match['person']
-            
-            # If person already has a birth date, check if it's close to our event
-            if person.birth_date and birth_date:
-                date_diff = abs((person.birth_date - birth_date).days)
-                # Allow up to 30 days difference (handling baptism vs birth date)
-                if date_diff <= 30:
-                    # Update the person with any new information
-                    if not person.birth_place and birth_event.location:
-                        person.birth_place = birth_event.location
-                    
-                    # Link the event to this person
-                    birth_event.person_id = person.id
-                    self.db.session.commit()
-                    
-                    return person
-            
-            # If person doesn't have a birth date, but has a compatible birth place
-            elif not person.birth_date and person.birth_place == birth_event.location:
-                # Update with birth date and link event
-                person.birth_date = birth_date
-                birth_event.person_id = person.id
-                self.db.session.commit()
-                
-                return person
-        
-        # If no suitable match found, create a new person
-        person = self.db.add_person(
-            first_name=birth_event.first_name,
-            last_name=birth_event.last_name,
-            birth_date=birth_date,
-            birth_place=birth_event.location
-        )
-        
-        # Link the event to this person
-        birth_event.person_id = person.id
-        self.db.session.commit()
-        
-        return person
-    
-    def _create_or_update_person_from_death(self, death_event):
-        """
-        Create or update a person record from a death event.
-        
-        Args:
-            death_event (DeathEvent): Death event record
-            
-        Returns:
-            Person: Created or updated person record
-        """
-        # Check if we already have a person linked to this event
-        if death_event.person_id:
-            return self.db.get_person_by_id(death_event.person_id)
-        
-        # Calculate approximate birth year based on age at death
-        birth_year = None
-        if death_event.age and death_event.year:
-            birth_year = death_event.year - death_event.age
-        
-        # Try to find an existing person by name and approximate birth year
-        death_date = None
-        if death_event.year:
-            try:
-                death_date = datetime.date(
-                    death_event.year, 
-                    death_event.month or 1, 
-                    death_event.day or 1
-                )
-            except ValueError:
-                pass
-        
-        # Look for potential matches
-        similar_persons = self.find_matches_by_name(
-            first_name=death_event.first_name,
-            last_name=death_event.last_name,
-            threshold=0.8
-        )
-        
-        # Check if any of the matches have a compatible birth year
-        for match in similar_persons:
-            person = match['person']
-            
-            # If person has a birth date, check if the birth year is compatible
-            if person.birth_date and birth_year:
-                year_diff = abs(person.birth_date.year - birth_year)
-                # Allow up to 5 years difference (approximate age reporting)
-                if year_diff <= 5:
-                    # Update the person with death information
-                    person.death_date = death_date
-                    person.death_place = death_event.location
-                    
-                    # Link the event to this person
-                    death_event.person_id = person.id
-                    self.db.session.commit()
-                    
-                    return person
-            
-            # If person doesn't have a birth date or death date yet
-            elif not person.death_date:
-                # Update with death information and link event
-                person.death_date = death_date
-                person.death_place = death_event.location
-                
-                # If we can estimate birth year from age at death
-                if birth_year and not person.birth_date:
-                    # Set approximate birth date (January 1 of estimated year)
-                    try:
-                        person.birth_date = datetime.date(birth_year, 1, 1)
-                    except ValueError:
-                        pass
-                
-                death_event.person_id = person.id
-                self.db.session.commit()
-                
-                return person
-        
-        # If no suitable match found, create a new person
-        birth_date = None
-        if birth_year:
-            try:
-                birth_date = datetime.date(birth_year, 1, 1)  # Approximate birth date
-            except ValueError:
-                pass
-        
-        person = self.db.add_person(
-            first_name=death_event.first_name,
-            last_name=death_event.last_name,
-            birth_date=birth_date,
-            death_date=death_date,
-            death_place=death_event.location
-        )
-        
-        # Link the event to this person
-        death_event.person_id = person.id
-        self.db.session.commit()
-        
-        return person
-    
-    def _create_or_update_person_from_marriage(self, marriage_event, is_groom=True):
-        """
-        Create or update a person record from a marriage event.
-        
-        Args:
-            marriage_event (MarriageEvent): Marriage event record
-            is_groom (bool): Whether to create/update the groom (True) or bride (False)
-            
-        Returns:
-            Person: Created or updated person record
-        """
-        # Get the relevant fields based on whether this is groom or bride
-        if is_groom:
-            first_name = marriage_event.groom_first_name
-            last_name = marriage_event.groom_last_name
-            age = marriage_event.groom_age
-            location = marriage_event.groom_location
-        else:
-            first_name = marriage_event.bride_first_name
-            last_name = marriage_event.bride_last_name
-            age = marriage_event.bride_age
-            location = marriage_event.bride_location
-        
-        # Calculate approximate birth year based on age at marriage
-        birth_year = None
-        if age and marriage_event.year:
-            birth_year = marriage_event.year - age
-        
-        # Look for potential matches
-        similar_persons = self.find_matches_by_name(
-            first_name=first_name,
-            last_name=last_name,
-            threshold=0.8
-        )
-        
-        # Check if any of the matches have a compatible birth year
-        for match in similar_persons:
-            person = match['person']
-            
-            # If person has a birth date, check if the birth year is compatible
-            if person.birth_date and birth_year:
-                year_diff = abs(person.birth_date.year - birth_year)
-                # Allow up to 5 years difference (approximate age reporting)
-                if year_diff <= 5:
-                    return person
-            
-            # If person doesn't have a birth date yet
-            elif not person.birth_date and birth_year:
-                # Update with approximate birth date
-                try:
-                    person.birth_date = datetime.date(birth_year, 1, 1)
-                    self.db.session.commit()
-                except ValueError:
-                    pass
-                
-                return person
-            
-            # If no birth year information, check location for additional confirmation
-            elif person.birth_place == location:
-                return person
-        
-        # If no suitable match found, create a new person
-        birth_date = None
-        if birth_year:
-            try:
-                birth_date = datetime.date(birth_year, 1, 1)  # Approximate birth date
-            except ValueError:
-                pass
-        
-        person = self.db.add_person(
-            first_name=first_name,
-            last_name=last_name,
-            birth_date=birth_date,
-            birth_place=location
-        )
-        
-        return person
-    
-    def _find_or_create_parent(self, first_name, last_name, child_last_name, gender, location):
-        """
-        Find or create a parent record.
-        
-        Args:
-            first_name (str): First name
-            last_name (str): Last name (can be None)
-            child_last_name (str): Child's last name (fallback for father's last name)
-            gender (str): Gender (MALE or FEMALE)
-            location (str): Location
-            
-        Returns:
-            Person: Found or created person record
-        """
-        # If it's a father and no last name provided, use child's last name
-        if gender == self.MALE and not last_name and child_last_name:
-            last_name = child_last_name
-        
-        # If we still don't have a last name, we can't reliably identify the person
-        if not last_name:
-            return None
-        
-        # Look for potential matches
-        similar_persons = self.find_matches_by_name(
             first_name=first_name,
             last_name=last_name,
             threshold=0.8
@@ -1317,3 +1063,251 @@ Update to the tree_builder.py file to fix the initialization issue
             
             # Recursively add child's descendants
             self._add_descendants(child, tree, max_generations, current_gen + 1)
+persons = self.find_matches_by_name(
+            first_name=birth_event.first_name,
+            last_name=birth_event.last_name,
+            threshold=0.8
+        )
+        
+        # Check if any of the matches have a compatible birth date
+        for match in similar_persons:
+            person = match['person']
+            
+            # If person already has a birth date, check if it's close to our event
+            if person.birth_date and birth_date:
+                date_diff = abs((person.birth_date - birth_date).days)
+                # Allow up to 30 days difference (handling baptism vs birth date)
+                if date_diff <= 30:
+                    # Update the person with any new information
+                    if not person.birth_place and birth_event.location:
+                        person.birth_place = birth_event.location
+                    
+                    # Link the event to this person
+                    birth_event.person_id = person.id
+                    self.db.session.commit()
+                    
+                    return person
+            
+            # If person doesn't have a birth date, but has a compatible birth place
+            elif not person.birth_date and person.birth_place == birth_event.location:
+                # Update with birth date and link event
+                person.birth_date = birth_date
+                birth_event.person_id = person.id
+                self.db.session.commit()
+                
+                return person
+        
+        # If no suitable match found, create a new person
+        person = self.db.add_person(
+            first_name=birth_event.first_name,
+            last_name=birth_event.last_name,
+            birth_date=birth_date,
+            birth_place=birth_event.location
+        )
+        
+        # Link the event to this person
+        birth_event.person_id = person.id
+        self.db.session.commit()
+        
+        return person
+    
+    def _create_or_update_person_from_death(self, death_event):
+        """
+        Create or update a person record from a death event.
+        
+        Args:
+            death_event (DeathEvent): Death event record
+            
+        Returns:
+            Person: Created or updated person record
+        """
+        # Check if we already have a person linked to this event
+        if death_event.person_id:
+            return self.db.get_person_by_id(death_event.person_id)
+        
+        # Calculate approximate birth year based on age at death
+        birth_year = None
+        if death_event.age and death_event.year:
+            birth_year = death_event.year - death_event.age
+        
+        # Try to find an existing person by name and approximate birth year
+        death_date = None
+        if death_event.year:
+            try:
+                death_date = datetime.date(
+                    death_event.year, 
+                    death_event.month or 1, 
+                    death_event.day or 1
+                )
+            except ValueError:
+                pass
+        
+        # Look for potential matches
+        similar_persons = self.find_matches_by_name(
+            first_name=death_event.first_name,
+            last_name=death_event.last_name,
+            threshold=0.8
+        )
+        
+        # Check if any of the matches have a compatible birth year
+        for match in similar_persons:
+            person = match['person']
+            
+            # If person has a birth date, check if the birth year is compatible
+            if person.birth_date and birth_year:
+                year_diff = abs(person.birth_date.year - birth_year)
+                # Allow up to 5 years difference (approximate age reporting)
+                if year_diff <= 5:
+                    # Update the person with death information
+                    person.death_date = death_date
+                    person.death_place = death_event.location
+                    
+                    # Link the event to this person
+                    death_event.person_id = person.id
+                    self.db.session.commit()
+                    
+                    return person
+            
+            # If person doesn't have a birth date or death date yet
+            elif not person.death_date:
+                # Update with death information and link event
+                person.death_date = death_date
+                person.death_place = death_event.location
+                
+                # If we can estimate birth year from age at death
+                if birth_year and not person.birth_date:
+                    # Set approximate birth date (January 1 of estimated year)
+                    try:
+                        person.birth_date = datetime.date(birth_year, 1, 1)
+                    except ValueError:
+                        pass
+                
+                death_event.person_id = person.id
+                self.db.session.commit()
+                
+                return person
+        
+        # If no suitable match found, create a new person
+        birth_date = None
+        if birth_year:
+            try:
+                birth_date = datetime.date(birth_year, 1, 1)  # Approximate birth date
+            except ValueError:
+                pass
+        
+        person = self.db.add_person(
+            first_name=death_event.first_name,
+            last_name=death_event.last_name,
+            birth_date=birth_date,
+            death_date=death_date,
+            death_place=death_event.location
+        )
+        
+        # Link the event to this person
+        death_event.person_id = person.id
+        self.db.session.commit()
+        
+        return person
+    
+    def _create_or_update_person_from_marriage(self, marriage_event, is_groom=True):
+        """
+        Create or update a person record from a marriage event.
+        
+        Args:
+            marriage_event (MarriageEvent): Marriage event record
+            is_groom (bool): Whether to create/update the groom (True) or bride (False)
+            
+        Returns:
+            Person: Created or updated person record
+        """
+        # Get the relevant fields based on whether this is groom or bride
+        if is_groom:
+            first_name = marriage_event.groom_first_name
+            last_name = marriage_event.groom_last_name
+            age = marriage_event.groom_age
+            location = marriage_event.groom_location
+        else:
+            first_name = marriage_event.bride_first_name
+            last_name = marriage_event.bride_last_name
+            age = marriage_event.bride_age
+            location = marriage_event.bride_location
+        
+        # Calculate approximate birth year based on age at marriage
+        birth_year = None
+        if age and marriage_event.year:
+            birth_year = marriage_event.year - age
+        
+        # Look for potential matches
+        similar_persons = self.find_matches_by_name(
+            first_name=first_name,
+            last_name=last_name,
+            threshold=0.8
+        )
+        
+        # Check if any of the matches have a compatible birth year
+        for match in similar_persons:
+            person = match['person']
+            
+            # If person has a birth date, check if the birth year is compatible
+            if person.birth_date and birth_year:
+                year_diff = abs(person.birth_date.year - birth_year)
+                # Allow up to 5 years difference (approximate age reporting)
+                if year_diff <= 5:
+                    return person
+            
+            # If person doesn't have a birth date yet
+            elif not person.birth_date and birth_year:
+                # Update with approximate birth date
+                try:
+                    person.birth_date = datetime.date(birth_year, 1, 1)
+                    self.db.session.commit()
+                except ValueError:
+                    pass
+                
+                return person
+            
+            # If no birth year information, check location for additional confirmation
+            elif person.birth_place == location:
+                return person
+        
+        # If no suitable match found, create a new person
+        birth_date = None
+        if birth_year:
+            try:
+                birth_date = datetime.date(birth_year, 1, 1)  # Approximate birth date
+            except ValueError:
+                pass
+        
+        person = self.db.add_person(
+            first_name=first_name,
+            last_name=last_name,
+            birth_date=birth_date,
+            birth_place=location
+        )
+        
+        return person
+    
+    def _find_or_create_parent(self, first_name, last_name, child_last_name, gender, location):
+        """
+        Find or create a parent record.
+        
+        Args:
+            first_name (str): First name
+            last_name (str): Last name (can be None)
+            child_last_name (str): Child's last name (fallback for father's last name)
+            gender (str): Gender (MALE or FEMALE)
+            location (str): Location
+            
+        Returns:
+            Person: Found or created person record
+        """
+        # If it's a father and no last name provided, use child's last name
+        if gender == self.MALE and not last_name and child_last_name:
+            last_name = child_last_name
+        
+        # If we still don't have a last name, we can't reliably identify the person
+        if not last_name:
+            return None
+        
+        # Look for potential matches
+        similar_

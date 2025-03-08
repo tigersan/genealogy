@@ -367,13 +367,19 @@ class Database:
             # Format date properly for Supabase
             marriage_date_str = marriage_date.isoformat() if marriage_date else None
             
-            # Check if marriage already exists
-            existing = self.supabase.table('marriages').select('*')\
-                .or(f"person1_id.eq.{person1_id},and(person2_id.eq.{person2_id}),person1_id.eq.{person2_id},and(person2_id.eq.{person1_id})").execute()
+            # Check if marriage already exists - more robust approach
+            # First check one direction
+            existing1 = self.supabase.table('marriages').select('*')\
+                .eq('person1_id', person1_id).eq('person2_id', person2_id).execute()
             
-            if existing.data and len(existing.data) > 0:
+            # Then check the other direction
+            existing2 = self.supabase.table('marriages').select('*')\
+                .eq('person1_id', person2_id).eq('person2_id', person1_id).execute()
+            
+            # Combine results
+            if (existing1.data and len(existing1.data) > 0) or (existing2.data and len(existing2.data) > 0):
                 # Marriage already exists, return it
-                marriage_dict = existing.data[0]
+                marriage_dict = existing1.data[0] if existing1.data else existing2.data[0]
                 if marriage_dict.get('marriage_date'):
                     try:
                         marriage_dict['marriage_date'] = datetime.fromisoformat(marriage_dict['marriage_date'])
@@ -486,4 +492,357 @@ class Database:
             if result.data and len(result.data) > 0:
                 # Create CensusEntry object from result
                 census_entry_dict = result.data[0]
-                census_entry
+                census_entry = CensusEntry(**census_entry_dict)
+                return census_entry
+            
+            return None
+        except Exception as e:
+            st.error(f"Error adding census entry: {str(e)}")
+            return None
+    
+    # Query operations
+    def get_person_by_id(self, person_id):
+        """Get a person by ID"""
+        try:
+            result = self.supabase.table('persons').select('*').eq('id', person_id).execute()
+            
+            if result.data and len(result.data) > 0:
+                person_dict = result.data[0]
+                
+                # Convert date strings to datetime objects
+                if person_dict.get('birth_date'):
+                    try:
+                        person_dict['birth_date'] = datetime.fromisoformat(person_dict['birth_date'])
+                    except ValueError:
+                        person_dict['birth_date'] = None
+                if person_dict.get('death_date'):
+                    try:
+                        person_dict['death_date'] = datetime.fromisoformat(person_dict['death_date'])
+                    except ValueError:
+                        person_dict['death_date'] = None
+                
+                person = Person(**person_dict)
+                
+                # Load relationships
+                person.parents = self._get_parent_relationships(person_id)
+                person.children = self._get_child_relationships(person_id)
+                person.spouses = self._get_marriages(person_id)
+                person.events_birth = self._get_birth_events(person_id)
+                person.events_death = self._get_death_events(person_id)
+                
+                return person
+            
+            return None
+        except Exception as e:
+            st.error(f"Error getting person: {str(e)}")
+            return None
+    
+    def _get_parent_relationships(self, child_id):
+        """Get parent relationships for a person"""
+        try:
+            result = self.supabase.table('relationships').select('*').eq('child_id', child_id).execute()
+            
+            relationships = []
+            if result.data:
+                for rel_dict in result.data:
+                    relationship = Relationship(**rel_dict)
+                    
+                    # Get parent
+                    parent_result = self.supabase.table('persons').select('*').eq('id', relationship.parent_id).execute()
+                    if parent_result.data and len(parent_result.data) > 0:
+                        parent_dict = parent_result.data[0]
+                        # Convert date strings to datetime objects
+                        if parent_dict.get('birth_date'):
+                            try:
+                                parent_dict['birth_date'] = datetime.fromisoformat(parent_dict['birth_date'])
+                            except ValueError:
+                                parent_dict['birth_date'] = None
+                        if parent_dict.get('death_date'):
+                            try:
+                                parent_dict['death_date'] = datetime.fromisoformat(parent_dict['death_date'])
+                            except ValueError:
+                                parent_dict['death_date'] = None
+                                
+                        relationship.parent = Person(**parent_dict)
+                    
+                    relationships.append(relationship)
+            
+            return relationships
+        except Exception as e:
+            st.error(f"Error getting parent relationships: {str(e)}")
+            return []
+    
+    def _get_child_relationships(self, parent_id):
+        """Get child relationships for a person"""
+        try:
+            result = self.supabase.table('relationships').select('*').eq('parent_id', parent_id).execute()
+            
+            relationships = []
+            if result.data:
+                for rel_dict in result.data:
+                    relationship = Relationship(**rel_dict)
+                    
+                    # Get child
+                    child_result = self.supabase.table('persons').select('*').eq('id', relationship.child_id).execute()
+                    if child_result.data and len(child_result.data) > 0:
+                        child_dict = child_result.data[0]
+                        # Convert date strings to datetime objects
+                        if child_dict.get('birth_date'):
+                            try:
+                                child_dict['birth_date'] = datetime.fromisoformat(child_dict['birth_date'])
+                            except ValueError:
+                                child_dict['birth_date'] = None
+                        if child_dict.get('death_date'):
+                            try:
+                                child_dict['death_date'] = datetime.fromisoformat(child_dict['death_date'])
+                            except ValueError:
+                                child_dict['death_date'] = None
+                                
+                        relationship.child = Person(**child_dict)
+                    
+                    relationships.append(relationship)
+            
+            return relationships
+        except Exception as e:
+            st.error(f"Error getting child relationships: {str(e)}")
+            return []
+    
+    def _get_marriages(self, person_id):
+        """Get marriages for a person"""
+        try:
+            # Get marriages where person is person1
+            result1 = self.supabase.table('marriages').select('*').eq('person1_id', person_id).execute()
+            
+            # Get marriages where person is person2
+            result2 = self.supabase.table('marriages').select('*').eq('person2_id', person_id).execute()
+            
+            marriages = []
+            
+            # Process all marriages from both queries
+            all_marriages = []
+            if result1.data:
+                all_marriages.extend(result1.data)
+            if result2.data:
+                all_marriages.extend(result2.data)
+                
+            for marriage_dict in all_marriages:
+                # Convert date strings to datetime objects
+                if marriage_dict.get('marriage_date'):
+                    try:
+                        marriage_dict['marriage_date'] = datetime.fromisoformat(marriage_dict['marriage_date'])
+                    except ValueError:
+                        marriage_dict['marriage_date'] = None
+                        
+                marriage = Marriage(**marriage_dict)
+                
+                # Get spouse (person1 or person2, depending on which one is not the current person)
+                spouse_id = marriage.person1_id if marriage.person1_id != person_id else marriage.person2_id
+                spouse_result = self.supabase.table('persons').select('*').eq('id', spouse_id).execute()
+                
+                if spouse_result.data and len(spouse_result.data) > 0:
+                    spouse_dict = spouse_result.data[0]
+                    # Convert date strings to datetime objects
+                    if spouse_dict.get('birth_date'):
+                        try:
+                            spouse_dict['birth_date'] = datetime.fromisoformat(spouse_dict['birth_date'])
+                        except ValueError:
+                            spouse_dict['birth_date'] = None
+                    if spouse_dict.get('death_date'):
+                        try:
+                            spouse_dict['death_date'] = datetime.fromisoformat(spouse_dict['death_date'])
+                        except ValueError:
+                            spouse_dict['death_date'] = None
+                            
+                    if marriage.person1_id == person_id:
+                        marriage.person2 = Person(**spouse_dict)
+                    else:
+                        marriage.person1 = Person(**spouse_dict)
+                
+                marriages.append(marriage)
+            
+            return marriages
+        except Exception as e:
+            st.error(f"Error getting marriages: {str(e)}")
+            return []
+    
+    def _get_birth_events(self, person_id):
+        """Get birth events for a person"""
+        try:
+            result = self.supabase.table('birth_events').select('*').eq('person_id', person_id).execute()
+            
+            events = []
+            if result.data:
+                for event_dict in result.data:
+                    event = BirthEvent(**event_dict)
+                    events.append(event)
+            
+            return events
+        except Exception as e:
+            st.error(f"Error getting birth events: {str(e)}")
+            return []
+    
+    def _get_death_events(self, person_id):
+        """Get death events for a person"""
+        try:
+            result = self.supabase.table('death_events').select('*').eq('person_id', person_id).execute()
+            
+            events = []
+            if result.data:
+                for event_dict in result.data:
+                    event = DeathEvent(**event_dict)
+                    events.append(event)
+            
+            return events
+        except Exception as e:
+            st.error(f"Error getting death events: {str(e)}")
+            return []
+    
+    def find_persons_by_name(self, first_name=None, last_name=None):
+        """Find persons by name"""
+        try:
+            query = self.supabase.table('persons').select('*')
+            
+            if first_name:
+                # Use ilike for case-insensitive search with wildcards
+                query = query.ilike('first_name', f'%{first_name}%')
+            
+            if last_name:
+                # Use ilike for case-insensitive search with wildcards
+                query = query.ilike('last_name', f'%{last_name}%')
+            
+            result = query.execute()
+            
+            persons = []
+            if result.data:
+                for person_dict in result.data:
+                    # Convert date strings to datetime objects
+                    if person_dict.get('birth_date'):
+                        try:
+                            person_dict['birth_date'] = datetime.fromisoformat(person_dict['birth_date'])
+                        except ValueError:
+                            person_dict['birth_date'] = None
+                    if person_dict.get('death_date'):
+                        try:
+                            person_dict['death_date'] = datetime.fromisoformat(person_dict['death_date'])
+                        except ValueError:
+                            person_dict['death_date'] = None
+                            
+                    person = Person(**person_dict)
+                    persons.append(person)
+            
+            return persons
+        except Exception as e:
+            st.error(f"Error finding persons: {str(e)}")
+            return []
+    
+    def get_family_tree(self, person_id, generations=3):
+        """Get family tree data for a person"""
+        try:
+            person = self.get_person_by_id(person_id)
+            if not person:
+                return None
+            
+            # Get parents
+            parents = []
+            for rel in person.parents:
+                if rel.parent:
+                    parents.append(rel.parent)
+            
+            # Get children
+            children = []
+            for rel in person.children:
+                if rel.child:
+                    children.append(rel.child)
+            
+            # Get spouses
+            spouses = []
+            for marriage in person.spouses:
+                if marriage.person1_id == person_id and marriage.person2:
+                    spouses.append(marriage.person2)
+                elif marriage.person2_id == person_id and marriage.person1:
+                    spouses.append(marriage.person1)
+            
+            return {
+                'person': person,
+                'parents': parents,
+                'children': children,
+                'spouses': spouses
+            }
+        except Exception as e:
+            st.error(f"Error getting family tree: {str(e)}")
+            return None
+    
+    def get_all_birth_events(self):
+        """Get all birth events"""
+        try:
+            result = self.supabase.table('birth_events').select('*').execute()
+            
+            events = []
+            if result.data:
+                for event_dict in result.data:
+                    event = BirthEvent(**event_dict)
+                    events.append(event)
+            
+            return events
+        except Exception as e:
+            st.error(f"Error getting all birth events: {str(e)}")
+            return []
+    
+    def get_all_death_events(self):
+        """Get all death events"""
+        try:
+            result = self.supabase.table('death_events').select('*').execute()
+            
+            events = []
+            if result.data:
+                for event_dict in result.data:
+                    event = DeathEvent(**event_dict)
+                    events.append(event)
+            
+            return events
+        except Exception as e:
+            st.error(f"Error getting all death events: {str(e)}")
+            return []
+    
+    def get_all_marriage_events(self):
+        """Get all marriage events"""
+        try:
+            result = self.supabase.table('marriage_events').select('*').execute()
+            
+            events = []
+            if result.data:
+                for event_dict in result.data:
+                    event = MarriageEvent(**event_dict)
+                    events.append(event)
+            
+            return events
+        except Exception as e:
+            st.error(f"Error getting all marriage events: {str(e)}")
+            return []
+    
+    def get_all_census_entries(self):
+        """Get all census entries"""
+        try:
+            result = self.supabase.table('census_entries').select('*').execute()
+            
+            entries = []
+            if result.data:
+                for entry_dict in result.data:
+                    entry = CensusEntry(**entry_dict)
+                    entries.append(entry)
+            
+            return entries
+        except Exception as e:
+            st.error(f"Error getting all census entries: {str(e)}")
+            return []
+
+# Initialize database instance
+db = None
+
+def init_database():
+    """Initialize and return the database instance"""
+    try:
+        return Database()
+    except Exception as e:
+        st.error(f"Failed to initialize database: {str(e)}")
+        return None

@@ -1,24 +1,193 @@
 """
-Database operations for Wolyn Genealogy Explorer using PostgreSQL on Supabase
+Database operations for Wolyn Genealogy Explorer using Supabase
 """
-import os
 import streamlit as st
 import pandas as pd
-from sqlalchemy import create_engine, Column, Integer, String, Date, ForeignKey, Float, Boolean, Text
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, relationship
+from datetime import datetime
 from passlib.hash import pbkdf2_sha256
+from supabase import create_client
 
-# Create a base class for our models
-Base = declarative_base()
-
-# Define our models
-class User(Base):
-    __tablename__ = 'users'
+# Model classes to maintain compatibility with existing code
+# These act as data container classes rather than SQLAlchemy models
+class Person:
+    def __init__(self, id=None, first_name=None, last_name=None, birth_date=None, 
+                 death_date=None, birth_place=None, death_place=None, confidence=1.0, **kwargs):
+        self.id = id
+        self.first_name = first_name
+        self.last_name = last_name
+        self.birth_date = birth_date
+        self.death_date = death_date
+        self.birth_place = birth_place
+        self.death_place = death_place
+        self.confidence = confidence
+        
+        # These will be populated later when needed
+        self.parents = []
+        self.children = []
+        self.spouses = []
+        self.events_birth = []
+        self.events_death = []
     
-    id = Column(Integer, primary_key=True)
-    username = Column(String(50), nullable=False, unique=True)
-    password_hash = Column(String(100), nullable=False)
+    def __repr__(self):
+        return f"<Person {self.first_name} {self.last_name}>"
+
+class Relationship:
+    def __init__(self, id=None, parent_id=None, child_id=None, is_father=False, 
+                 confidence=1.0, **kwargs):
+        self.id = id
+        self.parent_id = parent_id
+        self.child_id = child_id
+        self.is_father = is_father
+        self.confidence = confidence
+        
+        # These will be populated later when needed
+        self.parent = None
+        self.child = None
+
+class Marriage:
+    def __init__(self, id=None, person1_id=None, person2_id=None, marriage_date=None, 
+                 marriage_place=None, confidence=1.0, event_id=None, **kwargs):
+        self.id = id
+        self.person1_id = person1_id
+        self.person2_id = person2_id
+        self.marriage_date = marriage_date
+        self.marriage_place = marriage_place
+        self.confidence = confidence
+        self.event_id = event_id
+        
+        # These will be populated later when needed
+        self.person1 = None
+        self.person2 = None
+        self.event = None
+
+class BirthEvent:
+    def __init__(self, id=None, day=None, month=None, year=None, parish=None, 
+                 first_name=None, last_name=None, location=None, father_first_name=None, 
+                 mother_first_name=None, mother_maiden_name=None, godparents_notes=None, 
+                 signature=None, page=None, position=None, archive=None, scan_number=None, 
+                 index_author=None, scan_url=None, person_id=None, raw_html=None, **kwargs):
+        self.id = id
+        self.day = day
+        self.month = month
+        self.year = year
+        self.parish = parish
+        self.first_name = first_name
+        self.last_name = last_name
+        self.location = location
+        self.father_first_name = father_first_name
+        self.mother_first_name = mother_first_name
+        self.mother_maiden_name = mother_maiden_name
+        self.godparents_notes = godparents_notes
+        self.signature = signature
+        self.page = page
+        self.position = position
+        self.archive = archive
+        self.scan_number = scan_number
+        self.index_author = index_author
+        self.scan_url = scan_url
+        self.person_id = person_id
+        self.raw_html = raw_html
+        
+        # Will be populated later when needed
+        self.person = None
+
+class DeathEvent:
+    def __init__(self, id=None, day=None, month=None, year=None, parish=None, 
+                 first_name=None, last_name=None, age=None, location=None, 
+                 about_deceased_and_family=None, signature=None, page=None, 
+                 position=None, archive=None, scan_number=None, index_author=None, 
+                 scan_url=None, person_id=None, raw_html=None, **kwargs):
+        self.id = id
+        self.day = day
+        self.month = month
+        self.year = year
+        self.parish = parish
+        self.first_name = first_name
+        self.last_name = last_name
+        self.age = age
+        self.location = location
+        self.about_deceased_and_family = about_deceased_and_family
+        self.signature = signature
+        self.page = page
+        self.position = position
+        self.archive = archive
+        self.scan_number = scan_number
+        self.index_author = index_author
+        self.scan_url = scan_url
+        self.person_id = person_id
+        self.raw_html = raw_html
+        
+        # Will be populated later when needed
+        self.person = None
+
+class MarriageEvent:
+    def __init__(self, id=None, day=None, month=None, year=None, parish=None, 
+                 groom_first_name=None, groom_last_name=None, groom_location=None, 
+                 groom_age=None, groom_father_first_name=None, groom_mother_first_name=None, 
+                 groom_mother_maiden_name=None, bride_first_name=None, bride_last_name=None, 
+                 bride_location=None, bride_age=None, bride_father_first_name=None, 
+                 bride_mother_first_name=None, bride_mother_maiden_name=None, 
+                 witnesses_notes=None, signature=None, page=None, position=None, 
+                 archive=None, scan_number=None, index_author=None, scan_url=None, 
+                 raw_html=None, **kwargs):
+        self.id = id
+        self.day = day
+        self.month = month
+        self.year = year
+        self.parish = parish
+        self.groom_first_name = groom_first_name
+        self.groom_last_name = groom_last_name
+        self.groom_location = groom_location
+        self.groom_age = groom_age
+        self.groom_father_first_name = groom_father_first_name
+        self.groom_mother_first_name = groom_mother_first_name
+        self.groom_mother_maiden_name = groom_mother_maiden_name
+        self.bride_first_name = bride_first_name
+        self.bride_last_name = bride_last_name
+        self.bride_location = bride_location
+        self.bride_age = bride_age
+        self.bride_father_first_name = bride_father_first_name
+        self.bride_mother_first_name = bride_mother_first_name
+        self.bride_mother_maiden_name = bride_mother_maiden_name
+        self.witnesses_notes = witnesses_notes
+        self.signature = signature
+        self.page = page
+        self.position = position
+        self.archive = archive
+        self.scan_number = scan_number
+        self.index_author = index_author
+        self.scan_url = scan_url
+        self.raw_html = raw_html
+
+class CensusEntry:
+    def __init__(self, id=None, household_number=None, male_number=None, female_number=None, 
+                 full_name=None, male_age=None, female_age=None, parish=None, location=None, 
+                 year=None, archive=None, index_author=None, signature=None, page=None, 
+                 scan_number=None, notes=None, person_id=None, raw_html=None, **kwargs):
+        self.id = id
+        self.household_number = household_number
+        self.male_number = male_number
+        self.female_number = female_number
+        self.full_name = full_name
+        self.male_age = male_age
+        self.female_age = female_age
+        self.parish = parish
+        self.location = location
+        self.year = year
+        self.archive = archive
+        self.index_author = index_author
+        self.signature = signature
+        self.page = page
+        self.scan_number = scan_number
+        self.notes = notes
+        self.person_id = person_id
+        self.raw_html = raw_html
+
+class User:
+    def __init__(self, id=None, username=None, password_hash=None, **kwargs):
+        self.id = id
+        self.username = username
+        self.password_hash = password_hash
     
     def set_password(self, password):
         self.password_hash = pbkdf2_sha256.hash(password)
@@ -26,390 +195,295 @@ class User(Base):
     def verify_password(self, password):
         return pbkdf2_sha256.verify(password, self.password_hash)
 
-class Person(Base):
-    __tablename__ = 'persons'
-    
-    id = Column(Integer, primary_key=True)
-    first_name = Column(String(100))
-    last_name = Column(String(100))
-    birth_date = Column(Date, nullable=True)
-    death_date = Column(Date, nullable=True)
-    birth_place = Column(String(100), nullable=True)
-    death_place = Column(String(100), nullable=True)
-    
-    # Relationships
-    parents = relationship("Relationship", foreign_keys="Relationship.child_id", back_populates="child")
-    children = relationship("Relationship", foreign_keys="Relationship.parent_id", back_populates="parent")
-    spouses = relationship("Marriage", primaryjoin="or_(Person.id==Marriage.person1_id, Person.id==Marriage.person2_id)")
-    
-    events_birth = relationship("BirthEvent", back_populates="person")
-    events_death = relationship("DeathEvent", back_populates="person")
-    
-    confidence = Column(Float, default=1.0)  # Confidence level in this person's identity
-    
-    def __repr__(self):
-        return f"<Person {self.first_name} {self.last_name}>"
-
-class Relationship(Base):
-    __tablename__ = 'relationships'
-    
-    id = Column(Integer, primary_key=True)
-    parent_id = Column(Integer, ForeignKey('persons.id'))
-    child_id = Column(Integer, ForeignKey('persons.id'))
-    
-    # Define relationship type
-    is_father = Column(Boolean, default=False)
-    
-    # Confidence in this relationship
-    confidence = Column(Float, default=1.0)
-    
-    # Relations for easy navigation
-    parent = relationship("Person", foreign_keys=[parent_id], back_populates="children")
-    child = relationship("Person", foreign_keys=[child_id], back_populates="parents")
-
-class Marriage(Base):
-    __tablename__ = 'marriages'
-    
-    id = Column(Integer, primary_key=True)
-    person1_id = Column(Integer, ForeignKey('persons.id'))
-    person2_id = Column(Integer, ForeignKey('persons.id'))
-    marriage_date = Column(Date, nullable=True)
-    marriage_place = Column(String(100), nullable=True)
-    
-    # Confidence in this marriage
-    confidence = Column(Float, default=1.0)
-    
-    # Event reference if available
-    event_id = Column(Integer, ForeignKey('marriage_events.id'), nullable=True)
-    
-    person1 = relationship("Person", foreign_keys=[person1_id])
-    person2 = relationship("Person", foreign_keys=[person2_id])
-    event = relationship("MarriageEvent")
-
-# Event models to store raw scraped data
-class BirthEvent(Base):
-    __tablename__ = 'birth_events'
-    
-    id = Column(Integer, primary_key=True)
-    day = Column(Integer, nullable=True)
-    month = Column(Integer, nullable=True)
-    year = Column(Integer, nullable=True)
-    parish = Column(String(100), nullable=True)
-    first_name = Column(String(100))
-    last_name = Column(String(100))
-    location = Column(String(100), nullable=True)
-    father_first_name = Column(String(100), nullable=True)
-    mother_first_name = Column(String(100), nullable=True)
-    mother_maiden_name = Column(String(100), nullable=True)
-    godparents_notes = Column(Text, nullable=True)
-    signature = Column(String(50), nullable=True)
-    page = Column(String(20), nullable=True)
-    position = Column(String(20), nullable=True)
-    archive = Column(String(50), nullable=True)
-    scan_number = Column(String(20), nullable=True)
-    index_author = Column(String(20), nullable=True)
-    scan_url = Column(String(255), nullable=True)
-    
-    # Link to person record
-    person_id = Column(Integer, ForeignKey('persons.id'), nullable=True)
-    person = relationship("Person", back_populates="events_birth")
-    
-    raw_html = Column(Text, nullable=True)  # Store original HTML for reference
-
-class DeathEvent(Base):
-    __tablename__ = 'death_events'
-    
-    id = Column(Integer, primary_key=True)
-    day = Column(Integer, nullable=True)
-    month = Column(Integer, nullable=True)
-    year = Column(Integer, nullable=True)
-    parish = Column(String(100), nullable=True)
-    first_name = Column(String(100))
-    last_name = Column(String(100))
-    age = Column(Integer, nullable=True)
-    location = Column(String(100), nullable=True)
-    about_deceased_and_family = Column(Text, nullable=True)
-    signature = Column(String(50), nullable=True)
-    page = Column(String(20), nullable=True)
-    position = Column(String(20), nullable=True)
-    archive = Column(String(50), nullable=True)
-    scan_number = Column(String(20), nullable=True)
-    index_author = Column(String(20), nullable=True)
-    scan_url = Column(String(255), nullable=True)
-    
-    # Link to person record
-    person_id = Column(Integer, ForeignKey('persons.id'), nullable=True)
-    person = relationship("Person", back_populates="events_death")
-    
-    raw_html = Column(Text, nullable=True)  # Store original HTML for reference
-
-class MarriageEvent(Base):
-    __tablename__ = 'marriage_events'
-    
-    id = Column(Integer, primary_key=True)
-    day = Column(Integer, nullable=True)
-    month = Column(Integer, nullable=True)
-    year = Column(Integer, nullable=True)
-    parish = Column(String(100), nullable=True)
-    
-    # Groom information
-    groom_first_name = Column(String(100))
-    groom_last_name = Column(String(100))
-    groom_location = Column(String(100), nullable=True)
-    groom_age = Column(Integer, nullable=True)
-    groom_father_first_name = Column(String(100), nullable=True)
-    groom_mother_first_name = Column(String(100), nullable=True)
-    groom_mother_maiden_name = Column(String(100), nullable=True)
-    
-    # Bride information
-    bride_first_name = Column(String(100))
-    bride_last_name = Column(String(100))
-    bride_location = Column(String(100), nullable=True)
-    bride_age = Column(Integer, nullable=True)
-    bride_father_first_name = Column(String(100), nullable=True)
-    bride_mother_first_name = Column(String(100), nullable=True)
-    bride_mother_maiden_name = Column(String(100), nullable=True)
-    
-    witnesses_notes = Column(Text, nullable=True)
-    signature = Column(String(50), nullable=True)
-    page = Column(String(20), nullable=True)
-    position = Column(String(20), nullable=True)
-    archive = Column(String(50), nullable=True)
-    scan_number = Column(String(20), nullable=True)
-    index_author = Column(String(20), nullable=True)
-    scan_url = Column(String(255), nullable=True)
-    
-    raw_html = Column(Text, nullable=True)  # Store original HTML for reference
-
-class FamilyTree(Base):
-    __tablename__ = 'family_trees'
-    
-    id = Column(Integer, primary_key=True)
-    name = Column(String(100))
-    root_person_id = Column(Integer, ForeignKey('persons.id'))
-    created_at = Column(Date)
-    updated_at = Column(Date)
-    user_id = Column(Integer, ForeignKey('users.id'))
-    
-    root_person = relationship("Person")
-
-class CensusEntry(Base):
-    __tablename__ = 'census_entries'
-    
-    id = Column(Integer, primary_key=True)
-    household_number = Column(String(20), nullable=True)
-    male_number = Column(String(20), nullable=True)
-    female_number = Column(String(20), nullable=True)
-    full_name = Column(String(255))
-    male_age = Column(Integer, nullable=True)
-    female_age = Column(Integer, nullable=True)
-    parish = Column(String(100), nullable=True)
-    location = Column(String(100), nullable=True)
-    year = Column(Integer, nullable=True)
-    archive = Column(String(50), nullable=True)
-    index_author = Column(String(20), nullable=True)
-    signature = Column(String(50), nullable=True)
-    page = Column(String(20), nullable=True)
-    scan_number = Column(String(20), nullable=True)
-    notes = Column(Text, nullable=True)
-    
-    # Link to person record
-    person_id = Column(Integer, ForeignKey('persons.id'), nullable=True)
-    
-    raw_html = Column(Text, nullable=True)  # Store original HTML for reference
-
 class Database:
     def __init__(self):
-        """Initialize the database connection to Supabase PostgreSQL"""
-        # Get connection details from Streamlit secrets
+        """Initialize the database connection to Supabase"""
         try:
-            db_url = st.secrets["supabase_db"]["db_url"]
+            # Get Supabase URL and key from Streamlit secrets
+            self.url = st.secrets["supabase"]["url"]
+            self.key = st.secrets["supabase"]["key"]
             
-            # Create the engine with specific PostgreSQL options
-            self.engine = create_engine(db_url)
-            self.Session = sessionmaker(bind=self.engine)
+            # Create Supabase client
+            self.supabase = create_client(self.url, self.key)
             
-            # Create a session
-            self.session = self.Session()
-            
-            # Check connection
-            self.session.execute("SELECT 1")
-            
-            # Create tables if they don't exist
-            Base.metadata.create_all(self.engine)
+            # Test connection
+            self._initialize_tables()
             
         except Exception as e:
             st.error(f"Database connection error: {str(e)}")
             raise
     
+    def _initialize_tables(self):
+        """Initialize database tables if they don't exist"""
+        try:
+            # Check if tables exist, if not create them
+            # This would normally be done in SQL migrations but we'll implement a simplified version
+            
+            # Test if persons table exists by querying it
+            self.supabase.table("persons").select("id").limit(1).execute()
+            
+        except Exception as e:
+            # If tables don't exist, we would create them
+            # This would normally be done through Supabase migrations or SQL
+            st.warning("Tables may not be properly set up in Supabase. Please ensure the schema is created.")
+            # We don't automatically create tables with Supabase client as it requires SQL execution
+    
     def close(self):
-        """Close the database session"""
-        if hasattr(self, 'session'):
-            self.session.close()
+        """Close the database connection (no action needed for Supabase client)"""
+        pass
     
     # User operations
     def add_user(self, username, password):
         """Add a new user to the database"""
-        user = User(username=username)
-        user.set_password(password)
-        self.session.add(user)
-        self.session.commit()
-        return user
+        try:
+            # Create User object
+            user = User(username=username)
+            user.set_password(password)
+            
+            # Check if username already exists
+            existing = self.supabase.table('users').select('*').eq('username', username).execute()
+            if existing.data and len(existing.data) > 0:
+                return None  # Username already exists
+            
+            # Insert user into Supabase
+            user_data = {
+                'username': user.username,
+                'password_hash': user.password_hash
+            }
+            
+            result = self.supabase.table('users').insert(user_data).execute()
+            
+            if result.data and len(result.data) > 0:
+                user.id = result.data[0]['id']
+                return user
+            
+            return None
+        except Exception as e:
+            st.error(f"Error adding user: {str(e)}")
+            return None
     
     def verify_user(self, username, password):
         """Verify a user's credentials"""
-        user = self.session.query(User).filter_by(username=username).first()
-        if user and user.verify_password(password):
-            return user
-        return None
+        try:
+            result = self.supabase.table('users').select('*').eq('username', username).execute()
+            
+            if result.data and len(result.data) > 0:
+                user_data = result.data[0]
+                user = User(**user_data)
+                
+                if user.verify_password(password):
+                    return user
+            
+            return None
+        except Exception as e:
+            st.error(f"Error verifying user: {str(e)}")
+            return None
     
     # Person operations
     def add_person(self, first_name, last_name, birth_date=None, death_date=None, 
                    birth_place=None, death_place=None, confidence=1.0):
         """Add a new person to the database"""
-        person = Person(
-            first_name=first_name,
-            last_name=last_name,
-            birth_date=birth_date,
-            death_date=death_date,
-            birth_place=birth_place,
-            death_place=death_place,
-            confidence=confidence
-        )
-        self.session.add(person)
-        self.session.commit()
-        return person
+        try:
+            # Format dates properly for Supabase
+            birth_date_str = birth_date.isoformat() if birth_date else None
+            death_date_str = death_date.isoformat() if death_date else None
+            
+            # Prepare person data
+            person_data = {
+                'first_name': first_name,
+                'last_name': last_name,
+                'birth_date': birth_date_str,
+                'death_date': death_date_str,
+                'birth_place': birth_place,
+                'death_place': death_place,
+                'confidence': confidence
+            }
+            
+            # Insert person into Supabase
+            result = self.supabase.table('persons').insert(person_data).execute()
+            
+            if result.data and len(result.data) > 0:
+                # Create Person object from result
+                person_dict = result.data[0]
+                # Convert date strings to datetime objects
+                if person_dict.get('birth_date'):
+                    try:
+                        person_dict['birth_date'] = datetime.fromisoformat(person_dict['birth_date'])
+                    except ValueError:
+                        person_dict['birth_date'] = None
+                if person_dict.get('death_date'):
+                    try:
+                        person_dict['death_date'] = datetime.fromisoformat(person_dict['death_date'])
+                    except ValueError:
+                        person_dict['death_date'] = None
+                        
+                person = Person(**person_dict)
+                return person
+            
+            return None
+        except Exception as e:
+            st.error(f"Error adding person: {str(e)}")
+            return None
     
     def add_relationship(self, parent_id, child_id, is_father=False, confidence=1.0):
         """Add a parent-child relationship"""
-        relationship = Relationship(
-            parent_id=parent_id,
-            child_id=child_id,
-            is_father=is_father,
-            confidence=confidence
-        )
-        self.session.add(relationship)
-        self.session.commit()
-        return relationship
+        try:
+            # Check if relationship already exists
+            existing = self.supabase.table('relationships').select('*')\
+                .eq('parent_id', parent_id).eq('child_id', child_id).execute()
+            
+            if existing.data and len(existing.data) > 0:
+                # Relationship already exists, return it
+                rel_dict = existing.data[0]
+                relationship = Relationship(**rel_dict)
+                return relationship
+            
+            # Prepare relationship data
+            relationship_data = {
+                'parent_id': parent_id,
+                'child_id': child_id,
+                'is_father': is_father,
+                'confidence': confidence
+            }
+            
+            # Insert relationship into Supabase
+            result = self.supabase.table('relationships').insert(relationship_data).execute()
+            
+            if result.data and len(result.data) > 0:
+                # Create Relationship object from result
+                rel_dict = result.data[0]
+                relationship = Relationship(**rel_dict)
+                return relationship
+            
+            return None
+        except Exception as e:
+            st.error(f"Error adding relationship: {str(e)}")
+            return None
     
     def add_marriage(self, person1_id, person2_id, marriage_date=None, 
                      marriage_place=None, confidence=1.0, event_id=None):
         """Add a marriage relationship"""
-        marriage = Marriage(
-            person1_id=person1_id,
-            person2_id=person2_id,
-            marriage_date=marriage_date,
-            marriage_place=marriage_place,
-            confidence=confidence,
-            event_id=event_id
-        )
-        self.session.add(marriage)
-        self.session.commit()
-        return marriage
+        try:
+            # Format date properly for Supabase
+            marriage_date_str = marriage_date.isoformat() if marriage_date else None
+            
+            # Check if marriage already exists
+            existing = self.supabase.table('marriages').select('*')\
+                .or(f"person1_id.eq.{person1_id},and(person2_id.eq.{person2_id}),person1_id.eq.{person2_id},and(person2_id.eq.{person1_id})").execute()
+            
+            if existing.data and len(existing.data) > 0:
+                # Marriage already exists, return it
+                marriage_dict = existing.data[0]
+                if marriage_dict.get('marriage_date'):
+                    try:
+                        marriage_dict['marriage_date'] = datetime.fromisoformat(marriage_dict['marriage_date'])
+                    except ValueError:
+                        marriage_dict['marriage_date'] = None
+                        
+                marriage = Marriage(**marriage_dict)
+                return marriage
+            
+            # Prepare marriage data
+            marriage_data = {
+                'person1_id': person1_id,
+                'person2_id': person2_id,
+                'marriage_date': marriage_date_str,
+                'marriage_place': marriage_place,
+                'confidence': confidence,
+                'event_id': event_id
+            }
+            
+            # Insert marriage into Supabase
+            result = self.supabase.table('marriages').insert(marriage_data).execute()
+            
+            if result.data and len(result.data) > 0:
+                # Create Marriage object from result
+                marriage_dict = result.data[0]
+                if marriage_dict.get('marriage_date'):
+                    try:
+                        marriage_dict['marriage_date'] = datetime.fromisoformat(marriage_dict['marriage_date'])
+                    except ValueError:
+                        marriage_dict['marriage_date'] = None
+                        
+                marriage = Marriage(**marriage_dict)
+                return marriage
+            
+            return None
+        except Exception as e:
+            st.error(f"Error adding marriage: {str(e)}")
+            return None
     
     # Event operations
     def add_birth_event(self, **kwargs):
         """Add a birth event"""
-        birth_event = BirthEvent(**kwargs)
-        self.session.add(birth_event)
-        self.session.commit()
-        return birth_event
+        try:
+            # Filter out any keys that aren't in the model
+            birth_event_data = {k: v for k, v in kwargs.items() if hasattr(BirthEvent, k)}
+            
+            # Insert birth event into Supabase
+            result = self.supabase.table('birth_events').insert(birth_event_data).execute()
+            
+            if result.data and len(result.data) > 0:
+                # Create BirthEvent object from result
+                birth_event_dict = result.data[0]
+                birth_event = BirthEvent(**birth_event_dict)
+                return birth_event
+            
+            return None
+        except Exception as e:
+            st.error(f"Error adding birth event: {str(e)}")
+            return None
     
     def add_death_event(self, **kwargs):
         """Add a death event"""
-        death_event = DeathEvent(**kwargs)
-        self.session.add(death_event)
-        self.session.commit()
-        return death_event
+        try:
+            # Filter out any keys that aren't in the model
+            death_event_data = {k: v for k, v in kwargs.items() if hasattr(DeathEvent, k)}
+            
+            # Insert death event into Supabase
+            result = self.supabase.table('death_events').insert(death_event_data).execute()
+            
+            if result.data and len(result.data) > 0:
+                # Create DeathEvent object from result
+                death_event_dict = result.data[0]
+                death_event = DeathEvent(**death_event_dict)
+                return death_event
+            
+            return None
+        except Exception as e:
+            st.error(f"Error adding death event: {str(e)}")
+            return None
     
     def add_marriage_event(self, **kwargs):
         """Add a marriage event"""
-        marriage_event = MarriageEvent(**kwargs)
-        self.session.add(marriage_event)
-        self.session.commit()
-        return marriage_event
+        try:
+            # Filter out any keys that aren't in the model
+            marriage_event_data = {k: v for k, v in kwargs.items() if hasattr(MarriageEvent, k)}
+            
+            # Insert marriage event into Supabase
+            result = self.supabase.table('marriage_events').insert(marriage_event_data).execute()
+            
+            if result.data and len(result.data) > 0:
+                # Create MarriageEvent object from result
+                marriage_event_dict = result.data[0]
+                marriage_event = MarriageEvent(**marriage_event_dict)
+                return marriage_event
+            
+            return None
+        except Exception as e:
+            st.error(f"Error adding marriage event: {str(e)}")
+            return None
     
     def add_census_entry(self, **kwargs):
         """Add a census entry"""
-        census_entry = CensusEntry(**kwargs)
-        self.session.add(census_entry)
-        self.session.commit()
-        return census_entry
-    
-    # Query operations
-    def get_person_by_id(self, person_id):
-        """Get a person by ID"""
-        return self.session.query(Person).filter_by(id=person_id).first()
-    
-    def find_persons_by_name(self, first_name=None, last_name=None):
-        """Find persons by name"""
-        query = self.session.query(Person)
-        
-        if first_name:
-            query = query.filter(Person.first_name.ilike(f"%{first_name}%"))
-        
-        if last_name:
-            query = query.filter(Person.last_name.ilike(f"%{last_name}%"))
-        
-        return query.all()
-    
-    def get_family_tree(self, person_id, generations=3):
-        """Get family tree data for a person"""
-        # This would be a more complex query to get ancestors and descendants
-        # For simplicity, we'll just get the immediate family
-        person = self.get_person_by_id(person_id)
-        if not person:
-            return None
-        
-        # Get parents
-        parents = []
-        for rel in person.parents:
-            parents.append(rel.parent)
-        
-        # Get children
-        children = []
-        for rel in person.children:
-            children.append(rel.child)
-        
-        # Get spouses
-        spouses = []
-        for marriage in person.spouses:
-            if marriage.person1_id == person_id:
-                spouses.append(self.get_person_by_id(marriage.person2_id))
-            else:
-                spouses.append(self.get_person_by_id(marriage.person1_id))
-        
-        return {
-            'person': person,
-            'parents': parents,
-            'children': children,
-            'spouses': spouses
-        }
-    
-    def get_all_birth_events(self):
-        """Get all birth events"""
-        return self.session.query(BirthEvent).all()
-    
-    def get_all_death_events(self):
-        """Get all death events"""
-        return self.session.query(DeathEvent).all()
-    
-    def get_all_marriage_events(self):
-        """Get all marriage events"""
-        return self.session.query(MarriageEvent).all()
-    
-    def get_all_census_entries(self):
-        """Get all census entries"""
-        return self.session.query(CensusEntry).all()
-
-# Create a function to initialize the database instance
-def init_database():
-    """Initialize and return a database instance"""
-    try:
-        return Database()
-    except Exception as e:
-        st.error(f"Failed to initialize database: {str(e)}")
-        return None
-
-# Global database instance - will be initialized in app.py
-db = None
+        try:
+            # Filter out any keys that aren't in the model
+            census_entry_data = {k: v for k, v in kwargs.items() if hasattr(CensusEntry, k)}
+            
+            # Insert census entry into Supabase
+            result = self.supabase.table('census_entries').insert(census_entry_data).execute()
+            
+            if result.data and len(result.data) > 0:
+                # Create CensusEntry object from result
+                census_entry_dict = result.data[0]
+                census_entry

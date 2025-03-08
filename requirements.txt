@@ -10,3 +10,4 @@ python-Levenshtein>=0.20.9
 streamlit-agraph>=0.0.42
 streamlit-authenticator>=0.1.5
 pyvis>=0.3.2
+supabase>=1.0.3
